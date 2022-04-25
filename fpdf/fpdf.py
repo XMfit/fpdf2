@@ -171,10 +171,10 @@ class Annotation(NamedTuple):
     link: Union[str, int] = None
     alt_text: Optional[str] = None
     action: Optional[Action] = None
-    
+
     appearance: Optional[AppearanceDict] = None
     parent_field: Optional[Field] = None
-    
+
 class TitleStyle(NamedTuple):
     font_family: Optional[str] = None
     font_style: Optional[str] = None
@@ -325,12 +325,13 @@ class FPDF(GraphicsStateMixin):
         self.font_files = {}  # array of font files
         self.diffs = {}  # array of encoding differences
         self.images = {}  # array of used images
+        self.num_images = [0] * 2
         self.annots = defaultdict(list)  # map page numbers to arrays of Annotations
-        
+
         self.appearances = {}
         self.fields = {}
         self.field_ref = None
-        
+
         self.links = {}  # array of Destination
         self.in_footer = 0  # flag set when processing footer
         self.lasth = 0  # height of last cell printed
@@ -420,6 +421,46 @@ class FPDF(GraphicsStateMixin):
 
         self._drawing_graphics_state_registry = drawing.GraphicsStateDictRegistry()
         self._graphics_state_obj_refs = OrderedDict()
+
+        self.pdfa_compliance_dict = {
+            "doc_lang" : False,
+            "img_alt_desc"  : False,
+            "no_encryption" : True,
+            "author" : False,
+            "doc_title" : False,
+            "creation_data" : False,
+            "src_prgm_name" : False,
+            "no_img_transparency" : False,
+            "XMP_meta_specifies" : True
+        }
+
+    # My own added functions
+    def get_image_transparency(self):
+        return self.allow_images_transparency
+
+    def set_image_transparency(self, bool_value):
+        self.allow_images_transparency = bool_value
+        if bool_value == True:
+            self.pdfa_compliance_dict["no_img_transparency"] = False
+        else:
+            self.pdfa_compliance_dict["no_img_transparency"] = True
+
+    def check_alt_text(self):
+        if self.num_images[0] == self.num_images[1]:
+            self.pdfa_compliance_dict["img_alt_desc"] = True
+        else:
+            self.pdfa_compliance_dict["img_alt_desc"] = False
+
+    def get_pdfa_compliance(self):
+        self.check_alt_text()
+        vals = self.pdfa_compliance_dict.values()
+        for bool in vals:
+            if bool == False:
+                return None;
+        return 'PDF/A-1'
+
+    def print_compliance_dict(self):
+        print(self.pdfa_compliance_dict)
 
     @property
     def unifontsubset(self):
@@ -585,6 +626,7 @@ class FPDF(GraphicsStateMixin):
         Args:
             title (str): the title
         """
+        self.pdfa_compliance_dict["doc_title"] = True
         self.title = title
 
     def set_lang(self, lang):
@@ -597,6 +639,7 @@ class FPDF(GraphicsStateMixin):
         Args:
             lang (str): the document main language
         """
+        self.pdfa_compliance_dict["doc_lang"] = True
         self.lang = lang
 
     def set_subject(self, subject):
@@ -615,6 +658,7 @@ class FPDF(GraphicsStateMixin):
         Args:
             author(str): the name of the author
         """
+        self.pdfa_compliance_dict["author"] = True
         self.author = author
 
     def set_keywords(self, keywords):
@@ -643,12 +687,14 @@ class FPDF(GraphicsStateMixin):
     def set_creation_date(self, date=None):
         """Sets Creation of Date time, or current time if None given."""
         self.creation_date = datetime.now() if date is None else date
+        self.pdfa_compliance_dict["creation_data"] = True
 
     def set_xmp_metadata(self, xmp_metadata):
         if "<?xpacket" in xmp_metadata[:50]:
             raise ValueError(
                 "fpdf2 already performs XMP metadata wrapping in a <?xpacket> tag"
             )
+        self.pdfa_compliance_dict["src_prgm_name"] = True
         self.xmp_metadata = xmp_metadata
 
     def set_doc_option(self, opt, value):
@@ -1833,14 +1879,14 @@ class FPDF(GraphicsStateMixin):
         adict.add_appearance(aps)
         adict.add_appearance(aps2)
         field = None
-        
+
         if name:
             field = Field("Btn", name)
         else:
             field = Field("Btn")
         if not on:
             adict.set_value("/Off")
-        
+
         self.annots[self.page].append(
             Annotation(
                 "Widget",
@@ -1853,7 +1899,7 @@ class FPDF(GraphicsStateMixin):
             )
         )
         self.set_font(prev_font_family, prev_font_style, size=prev_font_size_pt)
-    
+
     @check_page
     def text_field(self, x, y, w, h, name=None, text=None):
         field = None
@@ -1861,7 +1907,7 @@ class FPDF(GraphicsStateMixin):
             field = Field("Tx", name)
         else:
             field = Field("Tx")
-        
+
         adict = AppearanceDict()
         text_stream = (
             "\n/Tx BMC\nq\nBT\n0 0 0 rg\n"
@@ -1889,8 +1935,8 @@ class FPDF(GraphicsStateMixin):
                 parent_field=field
             )
         )
-        
-    
+
+
     @check_page
     def text_annotation(self, x, y, text):
         """
@@ -2886,6 +2932,10 @@ class FPDF(GraphicsStateMixin):
             alt_text (str): optional alternative text describing the image,
                 for accessibility purposes. Displayed by some PDF readers on hover.
         """
+        self.num_images[0] = self.num_images[0] + 1
+        if alt_text != None:
+            self.num_images[1] = self.num_images[1] + 1
+
         if type:
             warnings.warn(
                 '"type" parameter is deprecated, unused and will soon be removed',
@@ -3265,7 +3315,7 @@ class FPDF(GraphicsStateMixin):
                         #    self.appearances[count] = annot.appearance.states()[state_name]
                         #    count = count + 1 # 4 -> 5
                         #annot_str += f" >> >>"
-                        
+
                         annot_str += f" /AS {annot.appearance.get_value()} /AP << /N"
                         if annot.parent_field.type == "Btn":
                             annot_str += " <<"
@@ -3279,7 +3329,7 @@ class FPDF(GraphicsStateMixin):
                             self.appearances[count] = annot.appearance.states()["/Text"]
                             count = count + 1 # 4 -> 5
                         annot_str += " >>"
-                        
+
                     if annot.parent_field:
                         if annot.parent_field.type == "Tx":
                             annot_str += f" /DA (0 0 0 rg /F{self.current_font['i']} {self.font_size_pt} Tf)"
@@ -3321,7 +3371,7 @@ class FPDF(GraphicsStateMixin):
                     count = count + 1 # 7
                 # End links list
                 self._out(f"/Annots [{annots}]")
-                
+
             if self.pdf_version > "1.3":
                 self._out("/Group <</Type /Group /S /Transparency" "/CS /DeviceRGB>>")
             spid = self._struct_parents_id_per_page.get(self.n)
@@ -3329,8 +3379,8 @@ class FPDF(GraphicsStateMixin):
                 self._out(f"/StructParents {spid}")
             self._out(f"/Contents {pdf_ref(self.n + 1)}>>")
             self._out("endobj")
-            
-            
+
+
             # Page content
             content = page["content"]
             p = zlib.compress(content) if self.compress else content
@@ -3339,7 +3389,7 @@ class FPDF(GraphicsStateMixin):
             self._out(pdf_stream(p))
             self._out("endobj")
 
-            
+
             count_new = 0
             for obj_num in self.appearances:
                 self.n = obj_num
@@ -3367,13 +3417,13 @@ class FPDF(GraphicsStateMixin):
                 field_str += "]>>"
                 self._out(f"{field_str}\nendobj")
                 count_new = count_new + 1
-            
-            
+
+
         #TO-DO - add functionality to add more pages
         # - do this by instead of adding fields directly, in this function, do it at the end when closing the document.
-        # also 
+        # also
         #print(count_new)
-        
+
         # Pages root
         self.offsets[1] = len(self.buffer)
         self._out("1 0 obj")
@@ -3384,7 +3434,7 @@ class FPDF(GraphicsStateMixin):
         self._out(">>")
         self._out("endobj")
 
-    
+
     def _substitute_page_number(self):
         nb = self.pages_count  # total number of pages
         substituted = False
